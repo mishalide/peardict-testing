@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Peardict — Dev Test UI</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <style>
+    /* intentionally ugly test ui */
+    body { font-family: monospace; max-width: 800px; margin: 40px auto; padding: 0 16px; background: #111; color: #eee; }
+    h1, h2 { color: #7fff7f; }
+    input, button, select { font-family: monospace; font-size: 14px; padding: 6px 10px; margin: 4px 0; }
+    input { background: #222; color: #eee; border: 1px solid #444; width: 280px; }
+    button { background: #1a3a1a; color: #7fff7f; border: 1px solid #3a6a3a; cursor: pointer; }
+    button:hover { background: #2a5a2a; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .section { border: 1px solid #333; padding: 16px; margin: 16px 0; }
+    .pick-row { display: flex; gap: 8px; align-items: center; margin: 6px 0; padding: 8px; background: #1a1a1a; border: 1px solid #2a2a2a; }
+    .pick-row button.blue { background: #0a1a3a; border-color: #4a7aaa; color: #7abfff; }
+    .pick-row button.red  { background: #3a0a0a; border-color: #aa4a4a; color: #ff7a7a; }
+    .pick-row button.blue:hover { background: #1a2a5a; }
+    .pick-row button.red:hover  { background: #5a1a1a; }
+    .pick-row.picked { opacity: 0.6; }
+    .badge { font-size: 11px; padding: 2px 6px; border: 1px solid; }
+    .badge.completed { border-color: #555; color: #888; }
+    .badge.open { border-color: #3a7a3a; color: #7fff7f; }
+    .lb-row { display: flex; gap: 16px; padding: 6px 0; border-bottom: 1px solid #222; font-size: 13px; }
+    .lb-row.me { color: #7fff7f; }
+    #log { background: #0a0a0a; border: 1px solid #222; padding: 10px; font-size: 11px; color: #888; max-height: 120px; overflow-y: auto; }
+    #status { color: #ffaa00; font-size: 12px; margin: 4px 0; }
+    .error { color: #ff7a7a; }
+    .success { color: #7fff7f; }
+  </style>
+</head>
+<body>
+
+<h1> Peardict  dev test ui</h1>
+<div id="status">initializing...</div>
+
+<!-- ── AUTH ── -->
+<div class="section" id="authSection">
+  <h2>Auth</h2>
+  <div>
+    <input id="email" type="email" placeholder="email" />
+    <input id="password" type="password" placeholder="password" />
+  </div>
+  <div>
+    <button onclick="signUp()">Sign Up</button>
+    <button onclick="signIn()">Sign In</button>
+    <button onclick="signOut()" id="signOutBtn" disabled>Sign Out</button>
+  </div>
+  <div id="authMsg"></div>
+</div>
+
+<!-- ── MATCHES ── -->
+<div class="section" id="matchSection" style="display:none">
+  <h2>Matches</h2>
+  <button onclick="loadMatches()">Refresh</button>
+  <div id="matchList" style="margin-top:10px;"></div>
+</div>
+
+<!-- ── LEADERBOARD ── -->
+<div class="section" id="lbSection" style="display:none">
+  <h2>Leaderboard</h2>
+  <button onclick="loadLeaderboard()">Refresh</button>
+  <div id="lbList" style="margin-top:10px;"></div>
+</div>
+
+<!-- ── LOG ── -->
+<div class="section">
+  <h2>Log</h2>
+  <div id="log"></div>
+</div>
+
+<script>
+  // ── CONFIG ──────────────────────────────────────────────────
+  // Paste your Supabase project URL and anon key here.
+  // These are safe to expose in the frontend (anon key + RLS).
+  const SUPABASE_URL  = "https://ycajdykfgseegrabdutp.supabase.co";
+  const SUPABASE_ANON = "sb_publishable_wmtVF-MgFeA7SR2ydTUIrQ_m4WeOy_G";
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+  // ── STATE ────────────────────────────────────────────────────
+  let currentUser = null;
+  let myPicks = {};   // match_id → pick row
+
+  // ── LOG ──────────────────────────────────────────────────────
+  function log(msg, cls = "") {
+    const el = document.getElementById("log");
+    const line = document.createElement("div");
+    if (cls) line.className = cls;
+    line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    el.prepend(line);
+  }
+
+  function setStatus(msg) {
+    document.getElementById("status").textContent = msg;
+  }
+
+  // ── AUTH ─────────────────────────────────────────────────────
+  async function signUp() {
+    const email    = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    // Use email local-part as display name by default
+    const display_name = email.split("@")[0];
+
+    setStatus("signing up...");
+    const { data, error } = await sb.auth.signUp({
+      email,
+      password,
+      options: { data: { display_name } }
+    });
+
+    if (error) {
+      log("sign up error: " + error.message, "error");
+      setStatus("sign up failed");
+    } else {
+      log("signed up — check email for confirmation link", "success");
+      setStatus("check your email");
+    }
+  }
+
+  async function signIn() {
+    const email    = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+
+    setStatus("signing in...");
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      log("sign in error: " + error.message, "error");
+      setStatus("sign in failed");
+    } else {
+      onSignIn(data.user);
+    }
+  }
+
+  async function signOut() {
+    await sb.auth.signOut();
+    currentUser = null;
+    myPicks = {};
+    document.getElementById("matchSection").style.display = "none";
+    document.getElementById("lbSection").style.display    = "none";
+    document.getElementById("signOutBtn").disabled = true;
+    document.getElementById("authMsg").textContent = "";
+    setStatus("signed out");
+    log("signed out");
+  }
+
+  function onSignIn(user) {
+    currentUser = user;
+    document.getElementById("authMsg").innerHTML =
+      `<span class="success">✓ signed in as ${user.email}</span>`;
+    document.getElementById("signOutBtn").disabled = false;
+    document.getElementById("matchSection").style.display = "";
+    document.getElementById("lbSection").style.display    = "";
+    setStatus(`logged in: ${user.email}`);
+    log(`signed in: ${user.email}`, "success");
+    loadMyPicks().then(loadMatches);
+    loadLeaderboard();
+  }
+
+  // ── PICKS ────────────────────────────────────────────────────
+  async function loadMyPicks() {
+    if (!currentUser) return;
+    const { data, error } = await sb
+      .from("picks")
+      .select("*")
+      .eq("user_id", currentUser.id);
+
+    if (error) { log("picks load error: " + error.message, "error"); return; }
+    myPicks = {};
+    for (const p of data) myPicks[p.match_id] = p;
+    log(`loaded ${data.length} of my picks`);
+  }
+
+  async function submitPick(matchId, side) {
+    if (!currentUser) { log("not signed in", "error"); return; }
+
+    log(`submitting pick: ${matchId} → ${side}`);
+    const { data, error } = await sb
+      .from("picks")
+      .insert({ user_id: currentUser.id, match_id: matchId, side })
+      .select()
+      .single();
+
+    if (error) {
+      log("pick error: " + error.message, "error");
+      return;
+    }
+
+    myPicks[matchId] = data;
+    log(`pick locked: ${matchId} → ${side}`, "success");
+    loadMatches();       // re-render to show locked state
+    loadLeaderboard();
+  }
+
+  // ── MATCHES ──────────────────────────────────────────────────
+  async function loadMatches() {
+    const { data, error } = await sb
+      .from("matches")
+      .select("*")
+      .order("match_id"); // alphabetical-ish; good enough for dev
+
+    if (error) { log("matches error: " + error.message, "error"); return; }
+
+    const container = document.getElementById("matchList");
+    if (!data.length) { container.innerHTML = "<div>no matches yet — run tba-import.js</div>"; return; }
+
+    container.innerHTML = data.map(m => {
+      const myPick  = myPicks[m.match_id];
+      const isOpen  = m.status === "open";
+      const isDone  = m.status === "completed";
+
+      const badge = isDone
+        ? `<span class="badge completed">DONE: ${m.winner?.toUpperCase() ?? "?"} wins</span>`
+        : `<span class="badge open">OPEN</span>`;
+
+      const scores = isDone
+        ? ` [blue ${m.blue_score} – red ${m.red_score}]`
+        : "";
+
+      const blueTeams = (m.blue_teams || []).join(", ");
+      const redTeams  = (m.red_teams  || []).join(", ");
+
+      let actions = "";
+      if (myPick) {
+        actions = `<span style="color:#ffaa00">→ picked ${myPick.side.toUpperCase()}${myPick.correct === true ? ' ✓' : myPick.correct === false ? ' ✗' : ' (pending)'}</span>`;
+      } else if (isOpen) {
+        actions = `
+          <button class="blue" onclick="submitPick('${m.match_id}', 'blue')">Pick Blue</button>
+          <button class="red"  onclick="submitPick('${m.match_id}', 'red')">Pick Red</button>
+        `;
+      } else {
+        actions = `<span style="color:#555">picks closed</span>`;
+      }
+
+      return `
+        <div class="pick-row ${myPick ? 'picked' : ''}">
+          <span style="min-width:120px">${m.match_id}</span>
+          ${badge}
+          <span style="color:#7abfff;min-width:160px">🔵 ${blueTeams}</span>
+          <span style="color:#ff7a7a;min-width:160px">🔴 ${redTeams}</span>
+          <span style="color:#888">${scores}</span>
+          ${actions}
+        </div>`;
+    }).join("");
+
+    log(`loaded ${data.length} matches`);
+  }
+
+  // ── LEADERBOARD ──────────────────────────────────────────────
+  async function loadLeaderboard() {
+    // hits the leaderboard view directly via PostgREST
+    const { data, error } = await sb
+      .from("leaderboard")
+      .select("*");
+
+    if (error) { log("leaderboard error: " + error.message, "error"); return; }
+
+    const container = document.getElementById("lbList");
+    if (!data.length) { container.innerHTML = "<div>no data yet</div>"; return; }
+
+    container.innerHTML = `
+      <div class="lb-row" style="color:#555;font-size:11px">
+        <span style="width:30px">#</span>
+        <span style="width:180px">scout</span>
+        <span style="width:80px">points</span>
+        <span style="width:80px">accuracy</span>
+        <span>picks</span>
+      </div>
+      ${data.map((row, i) => {
+        const isMe = currentUser && row.user_id === currentUser.id;
+        return `<div class="lb-row ${isMe ? 'me' : ''}">
+          <span style="width:30px">${i + 1}</span>
+          <span style="width:180px">${row.display_name}${isMe ? ' ◄' : ''}</span>
+          <span style="width:80px">${row.points} pts</span>
+          <span style="width:80px">${row.accuracy_pct}%</span>
+          <span>${row.correct_picks}/${row.scored_picks} (${row.total_picks} total)</span>
+        </div>`;
+      }).join("")}`;
+
+    log(`leaderboard: ${data.length} scouts`);
+  }
+
+  // ── INIT ─────────────────────────────────────────────────────
+  // Check if already signed in from a previous session
+  sb.auth.getSession().then(({ data: { session } }) => {
+    if (session?.user) {
+      onSignIn(session.user);
+    } else {
+      setStatus("not signed in");
+    }
+  });
+
+  // Listen for auth state changes (e.g. email confirmation redirect)
+  sb.auth.onAuthStateChange((_event, session) => {
+    if (session?.user && !currentUser) {
+      onSignIn(session.user);
+    }
+  });
+</script>
+</body>
+</html>
